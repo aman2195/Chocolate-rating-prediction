@@ -1,0 +1,327 @@
+install.packages("mltools")
+install.packages("CatEncoders")
+dim(df)
+#If we look at the column names we can see that they contain spaces as well as some line breaks, which definintely isn't good, so I will remove them using `gsub`. 
+# Remove and replace spaces and line breaks
+df <- read.csv('C:\\Users\\15145\\Downloads\\flavors_of_cacao.csv')
+names(df) <- tolower(gsub(pattern = '[[:space:]+]', '_', names(df))) #for futureaction
+# View the new column names 
+names(df)
+head(df)
+
+
+#Another piece of data cleaning that we should do is remove the _%_ sign from the cocoa_percent column. This will mean that we can have the column as numeric, which makes much more sense than having it as a string or category. 
+# Remove the % sign from the cocoa percent column
+df$cocoa.percent <- sapply(df$cocoa.percent, function(x) gsub("%", "", x))
+# Retype the columns
+df <- type_convert(df)
+
+# Have a look at the new data types
+map_df(df, class)
+#We can convert the year column to a date type using the `lubridate` package. 
+# Mutate a column that converts the year into a date type 
+df <- df %>%
+  mutate(review.date = ymd(paste(review.date, 1, 1, sep="-")))
+
+df=df%>%group_by(company.location)%>%mutate(company.location_rating=mean(rating))
+
+####label encoding###
+df$bean.type_encoded=as.factor(df$bean.type)
+df$bean.type_encoded=as.numeric(df$bean.type_encoded)
+
+df$broad.bean.origin_encoded=as.factor(df$broad.bean.origin)
+df$broad.bean.origin_encoded=as.numeric(df$broad.bean.origin_encoded)
+
+df$company.location_encoded=as.factor(df$company.location)
+df$company.location_encoded=as.numeric(df$company.location_encoded)
+
+df$specific.bean.origin.or.bar.name_encoding=as.factor(df$specific.bean.origin.or.bar.name)
+df$specific.bean.origin.or.bar.name_encoding=as.numeric(df$specific.bean.origin.or.bar.name_encoding)
+###############################################################
+
+
+#We can use the newly created date column that we mutated to create a simple summary table grouping by the year.  
+avg_ratings <- df %>% 
+  group_by(review.date) %>% # Group by new date column
+  summarise(avg_rating = mean(rating), n_ratings = n()) # Summary stats
+
+# Print our new table
+avg_ratings
+
+
+#Here we have created a basic summary table of the average ratings and the number of reviewed observations for each year in the range of our data.   
+ggplot(df, aes(x = rating, fill = as.factor(review.date))) + 
+  geom_density(alpha = .5) + 
+  theme_minimal() +
+  facet_wrap(~ as.factor(year(review.date))) + 
+  guides(fill = FALSE) + labs(x = 'Rating', y = 'Density')
+
+#While the peaks throughout the years seems to remain fairly constant, you can see that the most recent year doesn't have the spread of the first years.  
+#We can analyse this further by creating a summary table and visualisation while grouping by the year. 
+
+### Spread of ratings
+standard_deviations <- 
+  df %>% group_by(review.date) %>%
+  summarise(count = n(), avg = mean(rating), sd = sd(rating)) 
+standard_deviations
+
+
+#We seem to see that the standard deviation of rating seems to be decreasing as time passes. This is more clearly seen when you visualise the trend.  
+#I have included the number of reviews per year here using the `size` aesthetic of `geom_point` to give an idea of the sample size for each year as time passes. 
+standard_deviations %>% # Use our previous summary table
+  ggplot(aes(review.date, sd)) + 
+  geom_point(aes(size = count)) + # Change point size depending on number of reviews
+  geom_line(size = .5) + 
+  theme_minimal() + 
+  scale_x_date(date_breaks = '1 year', date_labels = '%Y') + 
+  scale_size(breaks = seq(0,250,50), name = 'Number of ratings') + 
+  labs(x = 'Date', 
+       y = 'Standard deviation of ratings', 
+       title = 'Standard deviation of review ratings over time')
+
+
+#Upon visualisation of the data we can see that 2017 might simply have a smaller spread due to the smaller number of ratings that have been taken in that year. As the number of ratings taken in the year increases, we say see it rise to near that of the previous 6/7 years, although there does appear to be a definite downward trend, implying that reviewers are giving less extreme scores. 
+
+### Extreme ratings
+low_scores <- df %>% 
+  group_by(review.date) %>%
+  summarise(less_than_2.5 = sum(rating < 2.5), count = n(), perc = round(less_than_2.5 / count, 2))
+
+low_scores
+
+high_scores <- df %>% 
+  group_by(review.date) %>%
+  summarise(greater_than_4.5 = sum(rating > 4.5), count = n(), perc = round(greater_than_4.5 / count, 2))
+
+high_scores
+
+#Having a closer look, by year, at the reviews that were given a rating of less than 2.5, you can clearly see that the number of those poor scores is going down, despite the number of reviews going up! 18% of reviews in 2006 (13/72) where less than 2.5, while only 5 reviews fell below that threshold since 2015!
+
+low_scores %>%
+  ggplot() + geom_line(aes(review.date, perc * 100)) + 
+  theme_minimal() + 
+  scale_x_date(date_breaks = '1 year', date_labels = '%Y') + 
+  labs(x = 'Date', 
+       y = 'Percentage',
+       title = 'Percentage of ratings below 2.5 by year')
+
+### Frequent ratings over time
+#So we have established that the spread of the ratings is getting smaller, and reviewers are giving less low scores below 2.5.  
+#We can further visualise these features of the data by exploring other plots. 
+
+df %>%
+  ggplot(aes(review.date, rating)) + 
+  geom_count(aes(colour = ..n..)) + 
+  geom_line(data = avg_ratings, aes(review.date, avg_rating), colour = 'red') + # Use average ratings table from earlier
+  scale_x_date(date_breaks = '1 year', date_labels = '%Y') + 
+  scale_size_continuous(name = 'Count') + scale_color_continuous(name = 'Count') + 
+  expand_limits(y = 0) + # Expand limits to include 0
+  theme_minimal() + 
+  labs(x = 'Review year', y = 'Rating')
+
+
+#We can see that the spread of the reviews is definitely narrowing, with the lower tail retracting and reviews now generally falling between 3 and 4 in 2015 onwards.  
+### Company location
+#We can investigate whether the location of the company has an impact on the quality of the product.  
+df %>%
+  group_by(company.location) %>% 
+  filter(n() > 10) %>% 
+  mutate(avg = mean(rating)) %>%
+  ggplot() + 
+  geom_boxplot(aes(reorder(company.location, avg), rating, fill = avg)) + 
+  scale_fill_continuous(low = '#ffffcc', high = '#fc4e2a', name = "Average rating") + 
+  coord_flip() + 
+  theme_minimal() + 
+  labs(x = 'Company Location', y = 'Rating') +
+  expand_limits(y = c(0,5))
+colnames(df)
+
+### Master makers
+#As the column in the data is company/maker, I will extract the maker so that we can compare the makers against one another to see if there are any master makers hidden in the data.  
+#Once I have split the company and maker from the column then I will select those makers that have at least 3 reviewed products.  
+colnames(df)[1] <- 'company_maker'
+sum(is.na(makers$company_maker))
+df <- df %>%
+  rowwise %>%
+  mutate(maker = str_match(company_maker, '\\((.*)\\)')[2]) %>% 
+ # If a maker was noted
+  group_by(maker) %>% # Grouping # Minimum product filter
+  mutate(makers_avg = mean(rating)) # Get average rating 
+
+
+
+df <- df %>%
+  rowwise %>%
+  mutate(bean_type1 = str_match(bean.type, '\\((.*)\\)')[2]) %>% 
+  # If a maker was noted
+  group_by(bean_type1) %>% # Grouping # Minimum product filter
+  mutate(bean_avg = mean(rating))
+
+
+df=df[-c(12)]
+
+unique(df$company.location)
+
+str(makers)
+
+ggplot(makers) + 
+  geom_boxplot(aes(x = reorder(maker, rating, FUN = mean), y = rating, fill = avg)) + 
+  labs(x = 'Maker', y = 'Rating') + 
+  coord_flip() + 
+  theme_minimal() + 
+  scale_fill_continuous(name = "Average rating") +
+  expand_limits(y = c(0,5))
+#It appears as those *Cinagra* is our master chocolatier.  
+### Company records over time
+#I split the company/maker column again, this time selecting the company, and filter by those with at least 10 reviews.    
+
+companies <- df %>%
+  rowwise() %>%
+  mutate(company = str_trim(str_split(company_maker, '\\(')[[1]][1])) %>%
+  group_by(company) %>% 
+  filter(n() > 10) %>% 
+  mutate(avg = mean(rating))
+
+df %>%
+  ggplot(aes(x = cocoa.percent, y = rating)) +
+  geom_jitter(alpha = .75) + 
+  coord_cartesian(ylim = c(0,5)) +
+  labs(x = 'Cocoa percentage', y = 'Rating') + 
+  theme_minimal() + 
+  geom_smooth(method = 'lm', se = FALSE, col = 'red')
+#There doesn't appear to be a strong relationship between cocoa percent and rating here. Let's have a look at the model separately.  
+
+model <- lm(formula = rating ~ cocoa.percent, 
+            data = df)
+
+summary(model)
+#With an adjusted R-squared of 0.02662 it is fair to say that this isn't a very good model, but there is a relationship between the rating and the `cocoa_percent`, it just isn't the most informative. The negative slope implies to us that the higher the `cocoa_percent` then the lower the rating of the chocolate.  
+
+### Considering time with predictions
+#We have already seen the impact that time has had on predictions. We can see that the spread of the ratings has decreased as time has passed. Perhaps factoring this into consideration will help us improve our prediction power.  
+
+ggplot(df, aes(x = cocoa.percent, y = rating, group = factor(year(review.date)))) +
+  geom_jitter(alpha = .75) + 
+  coord_cartesian(ylim = c(0,5)) +
+  labs(x = 'Cocoa percentage', y = 'Rating') + 
+  theme_minimal() + 
+  geom_smooth(method = 'lm', se = FALSE, aes(colour = factor(year(review.date)))) + 
+  scale_colour_discrete(name = 'Review year')
+
+
+#A plot like this is good at showing us that there is definitely deviation throughout the years regarding how cocoa percent relates to the rating, but if we wanted to know more about **which** years seem to diverge then faceting by `year(review_date)` might be more effective. Let's have a look.  
+ggplot(df, aes(x = cocoa.percent, y = rating, group = factor(year(review.date)))) +
+  geom_jitter(alpha = .5, shape = 21, size = 1) + 
+  coord_cartesian(ylim = c(0,5)) +
+  labs(x = 'Cocoa percentage', y = 'Rating', title = 'Rating and cocoa percent faceted by year of review') + 
+  theme_minimal() + 
+  geom_smooth(method = 'lm', se = FALSE, aes(colour = factor(year(review.date)))) + 
+  facet_wrap(~ year(review.date)) + 
+  guides(colour = FALSE) + # Remove colour legend as faceting makes this clearer anyway
+  theme(panel.spacing = unit(1, "lines")) # Just increase the spacing between plots slightly
+
+
+#Both the above plots illustrate to us that the slope of the line changes with year. The first one let's us evaluate that there are differences year on year and we can compare them, but it is quite messy. While faceting makes it slightly more difficult to directly compare the linear slopes but makes evaluating one at a time much more manageable.  
+
+#We can see how adding year to the linear predictor impacts the quality of our model.  
+model <- lm(formula = rating ~ cocoa.percent + factor(year(review.date)), 
+            data = df)
+
+summary(model)
+#This shows us that some of the years have a 'signficant' impact on the response variable, but overall the impact isn't as substantial as we might hope for.  
+#We can note that the R-squared value has risen from **0.02662** to **0.04097** so it is in the right direction but still pretty awful.  
+### Considering other model types 
+#Our linear models have yielded very little success; while this is likely to be indicative that the relationships and predictive power just isn't present in the data, I thought that I would just give it a go using a random forest rather than a plain linear model. 
+#Random forest models are probably more associated with classification tasks, rather than the regression task that we have set ourselves here. We will see later what that means for our predictions. Let's first build the model using the `rpart` package.
+#{r random_forest_model}
+
+library(rpart)
+set.seed(1000) # Set the seed to make results reproducible
+random_forest_model <- rpart(formula = 'rating ~ cocoa.percent + factor(year(review.date))', data = df)
+
+
+# Calling summary on a random forest model produces a large output so I have commented out for the sake of presentation space
+# summary(random_forest_model)
+#Now that we have our model, let's make some predictions and compare them to the actual ratings that were given. 
+
+
+forest_pred = predict(random_forest_model, df)
+table(forest_pred)
+
+#This is what I was talking about earlier. 
+#The predictions are binned because of the structure of the tree and decision trees in general. 
+#In our case the inputs are branched and reach a terminal node where they are given a numeric value as the prediction for that particular observation; 1 of 5 possible predictions in our case.  
+#We should also note that one of the predictions is greatly favoured: **3.23976405274115**  
+#This doesn't necessarily mean that the random forest is ineffective, and perhaps with some fine tuning we could improve that, but we want to be careful not to overfit the data by making the trees too deep. 
+
+library(Metrics) # Load metrics library for the rmse function
+forest_rmse <- rmse(actual = df$rating, predicted = forest_pred)
+linear_rmse <- rmse(actual = df$rating, predicted = predict(model, df))
+
+# Display the two results
+
+data.frame(forest_rmse, linear_rmse)
+
+#It does appear that the random forest model performs slightly better than the linear model that we ran earlier. 
+## Adding company location
+#Our model is lacking because of the predictors we are using to predict our response variables; the strength of the relationship with rating is not strong enough to magically produce a good prediction model.  
+#From the exploratory analysis, I can see that there appears to be a loose correlation with the location of the company and the rating. Perhaps including this will improve our predictive power, and reduce the RMSE. 
+
+class(df$company.location) # Check the class of the location - it is a character class
+n_distinct(df$company.location) # There are 60 distinct company locations in our data
+
+#I'm interested to see whether the random forest model will be able to handle the 60 categories categorical variable, or whether we have to one-hot encode it for example. For some algorithms, where a matrix is required, we could use `vtreat` to do just that and create a sparse matrix where the categories are spread across columns. 
+
+#{r rf_with_company_location}
+
+random_forest_model_2 <- rpart(formula = 'rating ~ cocoa.percent + factor(year(review.date)) + factor(company.location)', data = df)
+forest_pred_location = predict(random_forest_model_2, df)
+table(forest_pred_location)
+library(caret) # Load package
+varImp(random_forest_model_2) # View the variable importance
+
+#We can see that `company_location` has jumped over the year of review and is more important for our predictive power. `cocoa_percent` still remains the most important predictor variable. Let's have a look and see if it has had a positive impact on the RMSE. 
+forest_location_rmse <- rmse(actual = df$rating, predicted = forest_pred_location)
+data.frame(forest_rmse, linear_rmse, forest_location_rmse)
+
+## Broad bean origin
+#Let's have a look at the unique origins that are listed in the dataset. This is easily achieved using the `unique` function. 
+# Look at unique origins
+unique(df$broad.bean.origin)
+
+#Since we are looking at the broad bean origin during this part of the analysis we are going to want to remove those rows that don't appear to have a known bean origin.  
+#Using the unique values above we are able to look through the origins that are included in the data set and use that information to filter all the observations accordingly. 
+
+beans <- df %>% 
+  filter(!is.na(broad.bean.origin))     # Remove those with NA values # Remove those where the origin is too short to be a realistic palce
+### Most frequent bean origin
+#Now that we have filtered the data (`beans`) to include just those observations with broad bean origins we are able to working out which origins occur the most frequently, or are the most widely used in these chocolates. 
+# Most frequent broad bean origin
+beans %>% 
+  group_by(broad.bean.origin) %>% # Group by origin
+  filter(n() > 10) %>% # Limit to those with at least 10 observations
+  mutate(count = n()) %>% # Add the count column
+  ggplot(aes(x = reorder(broad.bean.origin, count))) + 
+  geom_bar() + 
+  coord_flip() + 
+  theme_minimal() + 
+  labs(x = 'Bean origin', y = 'Count', title = 'Most frequently used broad bean origins')
+
+#Looking at this simple graph we are able to see that the most popular broad bean origins are Venezuela, Ecuador and Peru. Madagascar, probably more famous for its vanilla, is in fourth place.  
+
+### Origin and ratings
+#Does the origin of the bean have a noticeable impact on the rating of the chocolate?*  
+#We can visualise the answer to this question by looking at the statistics of the ratings when they are grouped by their broad bean origin.  
+
+beans %>% 
+  group_by(broad.bean.origin) %>% 
+  filter(n() > 10) %>% # Keep only those with more than 10 observations
+  mutate(count = n()) %>%
+  ggplot() + 
+  geom_boxplot(aes(x = broad.bean.origin, y = rating)) + 
+  theme_minimal() + 
+  theme(axis.text.x = element_text(angle = 75, hjust = 1)) + 
+  labs(x = 'Broad bean origin', y = 'Rating')
+#Having seen the boxplot, we can see that there doesn't appear to be any relationship between broad bean origin and rating. The company or the maker that is producing the product itself must be a more important indicator of the overall rating of the chocolate. 
+#We can use the subset which contains only the companies with the most observations to generate a heatmap showing the interactions between company and broad bean origin.
+write.csv(df,'new_df.csv')
